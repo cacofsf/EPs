@@ -21,23 +21,27 @@
 
 #define L 1.0
 #define TOL 1.0e-5
-#define MAX_ITER 200 
+#define MAX_ITER 100000
 #define INI_EXP 3 // expoente inicial de 2 para malha mesh
 #define FIN_EXP 9 // expoente final de 2 para malha mesh
 #define ALPHA 7 // último algarismo do número usp
+#define DENSITY_1 8.84*10e-12
+#define DENSITY_2 75*10e-12
 
 /* Protótipos das funções */
 
 static void set_axis_mesh(double h, int n, double *x);
 static double f_eval(double x, double y);
-static void set_dirichlet_edges(int n, double *x, double *y, double **u);
 static double ue_eval(double x, double y);
+static double permiss_eval(double x, double y);
+static void set_dirichlet_bound(int n, double *x, double *y, double **u);
 static void set_u_exact(int n, double *x, double *y, double **u);
 static void set_init_cond(int n, double **u);
-static void jacobi(double h, int n, double *x, double *y, double **u);
-static void gauss_seidel(double h, double *x, double *y, double **u);
-static void sor(double omega, double h, double *x, double *y, double **u);
+static int jacobi(double h, int n, double *x, double *y, double **u);
+static int gauss_seidel(double h, int n, double *x, double *y, double **u);
+static int sor(double h, int n, double *x, double *y, double **u);
 static double norm_h_eval(double h, int n, double **u, double **u_prev);
+static double norm_inf_eval(int n, int m, double **u, double **ue);
 static double *vector_alloc(int n);
 static double **matrix_alloc(int m, int n);
 
@@ -46,10 +50,20 @@ static void print_matrix(int n, int m, double **matrix); //debug: for gdb
 /* Programa princial */
 int main()
 {
-	int n;
-	double h, mesh, *x, *y, **u, **ue;
+	int i, n, mesh, iter;
+	double h, *x, *y, **u, **ue, norm, norm_prev, elapsed_t;
+	clock_t start_t;
 
-	for (mesh = INI_EXP; mesh <= INI_EXP; mesh++) {
+	/*
+	 * O índice i é usado para selecionar os
+	 * elementos do array norm, que armazena
+	 * as normas sucessivas da diferença entre
+	 * as matrizes u (aproximação) e ue (solução
+	 * exata).
+	 */
+	//i = 0;
+
+	for (mesh = INI_EXP; mesh <= FIN_EXP; mesh++) {
 		n = pow(2, mesh);
 		h = L / n;
 	
@@ -61,12 +75,27 @@ int main()
 		set_axis_mesh(h, n, x);
 		set_axis_mesh(h, n, y);
 
-		set_dirichlet_edges(n, x, y, u);
+		set_dirichlet_bound(n, x, y, u);
 		set_init_cond(n, u);
 
-		jacobi(h, n, x, y, u);
-
+		start_t = clock();
+		//iter = jacobi(h, n, x, y, u);
+		//iter = gauss_seidel(h, n, x, y, u);
+		iter = sor(h, n, x, y, u);
+		elapsed_t = (double) (clock() - start_t) / CLOCKS_PER_SEC; 
 		set_u_exact(n, x, y, ue);
+		norm = norm_inf_eval(n, n, u, ue);
+		
+		/*
+		 * Imprime tabela de convergência com tempo
+		 * de resolução
+		 */
+		if (mesh == INI_EXP) {
+			printf("%d\t%f\t-\t\t%d\t%f\n", n, norm, iter, elapsed_t);
+		} else {
+			printf("%d\t%f\t%f\t%d\t%f\n", n, norm, norm_prev / norm, iter, elapsed_t);
+		}
+		norm_prev = norm;
 
 		free(x);
 		free(y);
@@ -92,17 +121,27 @@ static void set_axis_mesh(double h, int n, double *x)
 	}
 }
 
-static void set_dirichlet_edges(int n, double *x, double *y, double **u)
+static void set_dirichlet_bound(int n, double *x, double *y, double **u)
 {
 	int i, j;
 
 	for (i = 0; i <= n; i++) {
+		// Tarefa 3.1
 		u[i][0] = ue_eval(x[i], y[0]);
 		u[i][n] = ue_eval(x[i], y[n]);
+
+		// Tarefa 3.2
+		//u[i][0] = 0;
+		//u[i][n] = 110;
 	}
 	for (j = 0; j <= n; j++) {
+		// Tarefa 3.1
 		u[0][j] = ue_eval(x[0], y[j]);
 		u[n][j] = ue_eval(x[n], y[j]);
+
+		// Tarefa 3.2
+		//u[0][j] = 110 * sin(M_PI / 2 * y[j]);
+		//u[n][j] = u[0][j];
 	}
 }
 
@@ -114,10 +153,12 @@ static void set_dirichlet_edges(int n, double *x, double *y, double **u)
  * no ponto (x, y).
  */
 
-static double ue_eval(double x, double y)
-{
+static double ue_eval(double x, double y) {
 	// Tarefa 3.1.a
 	return (ALPHA * exp(x) * sin(y));
+
+	// Tarefa 3.2.b
+	//return (ALPHA * cos(M_PI * x) * sin(M_PI * y));
 }
 
 /*
@@ -132,6 +173,33 @@ static double f_eval(double x, double y)
 {
 	// Tarefa 3.1.a
 	return (0);
+
+	// Tarefa 3.1.b
+	//return ( 2 * ALPHA * M_PI * M_PI * cos(M_PI * x) * sin(M_PI * y) );
+
+	// Tarefa 3.2.a
+	//return (permiss_eval(x, y) / DENSITY_1);
+
+	// Tarefa 3.2.b
+	//return (permiss_eval(x, y) / DENSITY_2);
+}
+
+/*
+ * Função: permiss_eval
+ * Uso: result = permiss_eval(x, y);
+ * ---------------------------------
+ * Retorna a permissividade de um campo
+ * elétrico bi-dimensional no ponto
+ * (x, y).
+ */
+
+static double permiss_eval(double x, double y)
+{
+	// Tarefa 3.2.a
+	//return (100 * 10e-12);
+
+	// Tarefa 3.2.b
+	//return ( 10 * sin(M_PI * (x + y)) * 10e-08 );
 }
 
 /*
@@ -155,16 +223,16 @@ static void set_u_exact(int n, double *x, double *y, double **ue)
 
 /*
  * Função: jacobi
- * Uso: jacobi(h, n, x, y, u);
- * ---------------------------
+ * Uso: ite3r = jacobi(h, n, x, y, u);
+ * -----------------------------------
  * Implementa o algoritmo de Jacobi
  * para o resolver o sistema linear
  * oriundo do método numérico para
  * aproximar a solução da equação
- * e Poisson.
+ * de Poisson.
  */
 
-static void jacobi(double h, int n, double *x, double *y, double **u)
+static int jacobi(double h, int n, double *x, double *y, double **u)
 {
 	int i, j, k;
 	double norm, **u_prev;
@@ -186,7 +254,10 @@ static void jacobi(double h, int n, double *x, double *y, double **u)
 			}
 		}
 		norm = norm_h_eval(h, n, u, u_prev);
-		if (norm < TOL * h) return; // método convergiu
+		if (norm < TOL * h) { // método convergiu
+			 free(u_prev);
+			 return (k); 
+		}
 		for (i = 1; i < n; i++) {
 			for (j = 1; j < n; j++) {
 				u_prev[i][j] = u[i][j];
@@ -194,8 +265,107 @@ static void jacobi(double h, int n, double *x, double *y, double **u)
 		}
 	}
 	printf("Número máximo de iterações atingido.\n");
-
 	free(u_prev);
+	exit(1);
+}
+
+/*
+ * Função: gauss_seidel
+ * Uso: iter = gauss_seidel(h, n, x, y, u);
+ * ----------------------------------------
+ * Implementa o algoritmo de Gauss Seidel
+ * para o resolver o sistema linear
+ * oriundo do método numérico para
+ * aproximar a solução da equação
+ * de Poisson.
+ */
+
+static int gauss_seidel(double h, int n, double *x, double *y, double **u)
+{
+	int i, j, k;
+	double norm, **u_prev;
+
+	u_prev = matrix_alloc(n + 1, n + 1);
+
+	for (i = 0; i <= n; i++) {
+		for (j = 0; j <= n; j++) {
+			u_prev[i][j] = u[i][j];
+		}
+	}
+
+	for (k = 0; k < MAX_ITER; k++) {
+		for (i = 1; i < n; i++) {
+			for (j = 1; j < n; j++) {
+				u[i][j] = 0.25 * (u[i-1][j] + u_prev[i+1][j] +
+								  u[i][j-1] + u_prev[i][j+1] +
+								  h*h * f_eval(x[i], y[j]));
+			}
+		}
+		norm = norm_h_eval(h, n, u, u_prev);
+		if (norm < TOL * h) { // método convergiu
+			 free(u_prev);
+			 return (k); 
+		}
+		for (i = 1; i < n; i++) {
+			for (j = 1; j < n; j++) {
+				u_prev[i][j] = u[i][j];
+			}
+		}
+	}
+	printf("Número máximo de iterações atingido.\n");
+	free(u_prev);
+	exit(1);
+}
+
+/*
+ * Função: sor 
+ * Uso: iter = sor(h, n, x, y, u);
+ * -------------------------------
+ * Implementa o algoritmo SOR
+ * para o resolver o sistema linear
+ * oriundo do método numérico para
+ * aproximar a solução da equação
+ * de Poisson.
+ */
+
+static int sor(double h, int n, double *x, double *y, double **u)
+{
+	int i, j, k;
+	double norm, omega, **u_prev;
+
+	u_prev = matrix_alloc(n + 1, n + 1);
+
+	omega = 2 / (1 + sin(M_PI * h));
+
+	for (i = 0; i <= n; i++) {
+		for (j = 0; j <= n; j++) {
+			u_prev[i][j] = u[i][j];
+		}
+	}
+
+	for (k = 0; k < MAX_ITER; k++) {
+		for (i = 1; i < n; i++) {
+			for (j = 1; j < n; j++) {
+				u[i][j] = (1 - omega)*u_prev[i][j] + 0.25*omega *
+						  ( u[i-1][j] + u_prev[i+1][j] +
+						    u[i][j-1] + u_prev[i][j+1] +
+						    h*h * f_eval(x[i], y[j]) );
+			}
+		}
+		norm = norm_h_eval(h, n, u, u_prev);
+		if (norm < TOL * h) { // método convergiu
+			 free(u_prev);
+			 return (k); 
+		}
+		for (i = 1; i < n; i++) {
+			for (j = 1; j < n; j++) {
+				u_prev[i][j] = u[i][j];
+			}
+		}
+	}
+	printf("Número máximo de iterações atingido.\n");
+	free(u_prev);
+	exit(1);
 }
 
 /*
@@ -242,6 +412,30 @@ static double norm_h_eval(double h, int n, double **u, double **u_prev)
 	}
 	result = sqrt(result) * h;
 	return (result);
+}
+
+/*
+ * Function: norm_inf_eval
+ * Uso: norm_inf = norm_inf_eval(.); //TODO
+ * ---------------------------------
+ * Calcula a norma infinito das aproximações nas
+ * sucessivas malhas, em relação à solução exata.
+ */
+
+static double norm_inf_eval(int n, int m, double **u, double **ue)
+{
+	int i, j;
+	double norm_inf;
+
+	norm_inf = 0;
+	for (i = 1; i < n - 1; i++) {
+		for (j = 1; j < m - 1; j++) {
+			if (fabs(u[i][j] - ue[i][j]) > norm_inf ) {
+				norm_inf = fabs(u[i][j] - ue[i][j]);
+			}
+		}
+	}
+	return (norm_inf);
 }
 
 /*
